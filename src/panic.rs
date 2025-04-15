@@ -1,11 +1,13 @@
-use crate::OwnedLocation;
 use crate::hook::{NextHook, catch_unwind_with_scoped_hook};
 use std::any::Any;
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::borrow::Cow;
+use std::error::Error;
 use std::fmt::{self, Display};
-use std::panic::UnwindSafe;
-
+use std::panic::{Location, UnwindSafe};
+/// Panic info gathered as one record
+///
+/// Contains panic's location, message or raw payload, and backtrace, if collected
 #[derive(Debug)]
 pub struct Panic {
     location: Option<OwnedLocation>,
@@ -18,10 +20,14 @@ type Message = Cow<'static, str>;
 type RawPayload = Box<dyn Any + Send + 'static>;
 
 impl Panic {
+    /// Panic location, if original [`std::panic::PanicHookInfo`] provided one
     pub fn location(&self) -> Option<&OwnedLocation> {
         self.location.as_ref()
     }
-
+    /// Original panic message which was supplied to [`std::panic!`] macro
+    ///
+    /// If panic was raised using [`std::panic::panic_any`] with non-string payload,
+    /// this function returns substitute message
     pub fn message(&self) -> &str {
         if let Ok(msg) = &self.payload {
             msg.as_ref()
@@ -29,11 +35,11 @@ impl Panic {
             "<unknown panic>"
         }
     }
-
+    /// Raw panic payload if it wasn't recognized as string-like message and converted to it
     pub fn raw_payload(&self) -> Option<&RawPayload> {
         self.payload.as_ref().err()
     }
-
+    /// Panic's backtrace gathered from within panic hook
     pub fn backtrace(&self) -> &Backtrace {
         &self.backtrace
     }
@@ -48,7 +54,8 @@ impl Panic {
             Ok(Cow::Owned(str)) => Box::new(str) as RawPayload,
         }
     }
-
+    /// Produces [`std::fmt::Display`]'able object
+    /// which displays panic's message, location and backtrace, if captured
     pub fn display_with_backtrace(&self) -> impl Display + '_ {
         format_from_fn(move |f| {
             write!(f, "{}", self)?;
@@ -77,6 +84,9 @@ fn transform_payload(payload: RawPayload) -> Result<Message, RawPayload> {
 }
 
 impl Display for Panic {
+    /// Displays panic's message and location
+    ///
+    /// To display full panic info including backtrace, use [`Panic::display_with_backtrace`]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(loc) = self.location() {
             write!(f, "Panic \"{}\" at {}", self.message(), loc)
@@ -85,9 +95,29 @@ impl Display for Panic {
         }
     }
 }
-/// Runs provided closure and captures any panics which may happen on the way
+
+impl Error for Panic {}
+/// Determines how to capture backtrace when catching panic
+#[derive(Copy, Clone, Debug, Default)]
+pub enum CaptureBacktrace {
+    /// Use [`std::backtrace::Backtrace::disabled`]
+    No,
+    /// Use [`std::backtrace::Backtrace::capture`]
+    #[default]
+    Yes,
+    /// Use [`std::backtrace::Backtrace::force_capture`]
+    Force,
+}
+/// Options for [`catch_panic_with_config`]
+#[derive(Copy, Clone, Debug)]
+pub struct CatchPanicConfig {
+    /// Whether backtrace should be captured
+    pub capture_backtrace: CaptureBacktrace,
+}
+/// Runs provided closure and captures panic if one happens
 ///
 /// # Parameters
+/// * `config` - options used when capturing panic info
 /// * `body` - closure which should be run with capturing panics.
 ///   The closure has same requirements as the parameter to [`std::panic::catch_unwind`].
 ///   In particular, if you want to assert that closure is unwind safe when type system
@@ -97,7 +127,10 @@ impl Display for Panic {
 /// # Returns
 /// * `Ok(result)` - with `body1`'s return value if it completes without panic
 /// * `Err(panic)` - if `body` panics in process, with `Panic` as error value
-pub fn catch_panic<R>(body: impl FnOnce() -> R + UnwindSafe) -> Result<R, Panic> {
+pub fn catch_panic_with_config<R>(
+    config: CatchPanicConfig,
+    body: impl FnOnce() -> R + UnwindSafe,
+) -> Result<R, Panic> {
     let mut panic_bits = None;
 
     match catch_unwind_with_scoped_hook(
@@ -105,7 +138,14 @@ pub fn catch_panic<R>(body: impl FnOnce() -> R + UnwindSafe) -> Result<R, Panic>
             // FIXME: check `info.can_unwind()` when https://github.com/rust-lang/rust/issues/92988 stabilizes;
             // otherwise we won't handle properly panics which initially don't unwind
             if panic_bits.is_none() {
-                panic_bits = Some((info.location().map(Into::into), Backtrace::capture()));
+                panic_bits = Some((
+                    info.location().map(Into::into),
+                    match config.capture_backtrace {
+                        CaptureBacktrace::No => Backtrace::disabled(),
+                        CaptureBacktrace::Yes => Backtrace::capture(),
+                        CaptureBacktrace::Force => Backtrace::force_capture(),
+                    },
+                ));
                 NextHook::Break
             } else {
                 // In this case we assume we get non-unwinding panic in process of unwind.
@@ -128,6 +168,64 @@ pub fn catch_panic<R>(body: impl FnOnce() -> R + UnwindSafe) -> Result<R, Panic>
                 backtrace,
             })
         }
+    }
+}
+/// Runs provided closure and captures panic if one happens, along with its backtrace
+///
+/// # Parameters
+/// * `body` - closure which should be run with capturing panics.
+///   The closure has same requirements as the parameter to [`std::panic::catch_unwind`].
+///   In particular, if you want to assert that closure is unwind safe when type system
+///   can't deduce it, you can use [`std::panic::AssertUnwindSafe`].
+///   See [`std::panic::catch_unwind`] for details.
+///
+/// # Returns
+/// * `Ok(result)` - with `body1`'s return value if it completes without panic
+/// * `Err(panic)` - if `body` panics in process, with `Panic` as error value
+pub fn catch_panic<R>(body: impl FnOnce() -> R + UnwindSafe) -> Result<R, Panic> {
+    catch_panic_with_config(
+        CatchPanicConfig {
+            capture_backtrace: CaptureBacktrace::Yes,
+        },
+        body,
+    )
+}
+/// Simple structure which mirrors [`std::panic::Location`],
+/// although owns file name and is freely movable around
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct OwnedLocation {
+    file: String,
+    line: u32,
+    column: u32,
+}
+
+impl OwnedLocation {
+    pub fn file(&self) -> &str {
+        &self.file
+    }
+
+    pub fn line(&self) -> u32 {
+        self.line
+    }
+
+    pub fn column(&self) -> u32 {
+        self.column
+    }
+}
+
+impl From<&'_ Location<'_>> for OwnedLocation {
+    fn from(value: &Location<'_>) -> Self {
+        Self {
+            file: value.file().to_owned(),
+            line: value.line(),
+            column: value.column(),
+        }
+    }
+}
+
+impl Display for OwnedLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}:{}", self.file, self.line, self.column)
     }
 }
 /// Creates type whose `Display` and `Debug` implementations

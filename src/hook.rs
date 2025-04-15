@@ -47,7 +47,11 @@ pub fn with_scoped_hook<R>(
 ///
 /// # Parameters
 /// * `hook` - panic hook function which receives panic info during `body`'s execution
-/// * `body` - actual payload code
+/// * `body` - Actual payload closure.
+///   The closure has same requirements as the parameter to [`std::panic::catch_unwind`].
+///   In particular, if you want to assert that closure is unwind safe when type system
+///   can't deduce it, you can use [`std::panic::AssertUnwindSafe`].
+///   See [`std::panic::catch_unwind`] for details.
 ///
 /// # Returns
 /// Usual `catch_unwind` result with `Ok(...)` being return value from `body`
