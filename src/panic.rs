@@ -109,7 +109,7 @@ pub enum CaptureBacktrace {
     Force,
 }
 /// Options for [`catch_panic_with_config`]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct CatchPanicConfig {
     /// Whether backtrace should be captured
     pub capture_backtrace: CaptureBacktrace,
@@ -264,4 +264,52 @@ fn format_from_fn<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result>(
     }
 
     FormatFromFn { format_fn }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic::panic_any;
+
+    #[test]
+    fn simple_catch_panic() {
+        let panic = catch_panic(|| panic!("Oops!")).unwrap_err();
+        // NB: we test backtrace status separately
+        assert!(panic.raw_payload().is_none());
+        assert_eq!(panic.message(), "Oops!");
+
+        let loc = panic.location().unwrap();
+        assert!(loc.file().ends_with("/panic.rs"));
+        assert_eq!(loc.line(), 276);
+        assert_eq!(loc.column(), 36);
+
+        let payload = panic.into_raw_payload();
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"Oops!"));
+    }
+
+    #[test]
+    fn catch_panic_any() {
+        let panic = catch_panic(|| panic_any("Oops!")).unwrap_err();
+        assert_eq!(panic.message(), "Oops!");
+        assert!(panic.raw_payload().is_none());
+
+        let panic = catch_panic(|| panic_any(42usize)).unwrap_err();
+        assert_eq!(panic.message(), "<unknown panic>");
+        assert_eq!(
+            panic.raw_payload().and_then(|p| p.downcast_ref::<usize>()),
+            Some(&42usize)
+        );
+    }
+
+    #[test]
+    fn catch_panic_no_backtrace() {
+        let panic = catch_panic_with_config(
+            CatchPanicConfig {
+                capture_backtrace: CaptureBacktrace::No,
+            },
+            || panic!("Oops!"),
+        )
+        .unwrap_err();
+        assert_eq!(panic.backtrace().status(), BacktraceStatus::Disabled);
+    }
 }

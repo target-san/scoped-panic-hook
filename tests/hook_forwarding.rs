@@ -1,7 +1,6 @@
+use scoped_panic_hook::hook::{NextHook, catch_unwind_with_scoped_hook};
 use std::panic::{PanicHookInfo, set_hook};
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-use scoped_panic_hook::hook::{NextHook, catch_unwind_with_scoped_hook};
 
 static GLOB_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -10,7 +9,7 @@ fn counter_hook(_info: &PanicHookInfo<'_>) {
 }
 /// If we return [`NextHook::PrevInstalledHook`] from hook,
 /// previus installed hook should be actually invoked
-/// 
+///
 /// Must be in separate binary because it overrides default hook
 /// prior to scoped one takes effect
 #[test]

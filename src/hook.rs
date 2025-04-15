@@ -115,7 +115,7 @@ mod tests {
             },
             || (),
         )
-        .unwrap_err();
+        .unwrap();
 
         assert_eq!(counter, 0);
     }

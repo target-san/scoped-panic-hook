@@ -24,3 +24,7 @@ which includes panic location, message, raw payload and backtrace
 
 Project uses [`cargo-xtask` pattern](https://github.com/matklad/cargo-xtask).
 Run `cargo xtask` to see available commands
+
+# TODO
+
+Test no-unwind cases
