@@ -1,5 +1,5 @@
-use crate::hook::{catch_unwind_with_scoped_hook, NextHook};
 use crate::OwnedLocation;
+use crate::hook::{NextHook, catch_unwind_with_scoped_hook};
 use std::any::Any;
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::borrow::Cow;
@@ -31,11 +31,7 @@ impl Panic {
     }
 
     pub fn raw_payload(&self) -> Option<&RawPayload> {
-        if let Err(payload) = &self.payload {
-            Some(payload)
-        } else {
-            None
-        }
+        self.payload.as_ref().err()
     }
 
     pub fn backtrace(&self) -> &Backtrace {
@@ -43,7 +39,7 @@ impl Panic {
     }
     /// Transforms panic info into raw panic payload.
     /// If it's a string-like message, it gets re-wrapped again.
-    /// 
+    ///
     /// Useful when you need something like rethrowing panic
     pub fn into_raw_payload(self) -> RawPayload {
         match self.payload {
@@ -93,11 +89,11 @@ impl Display for Panic {
 ///
 /// # Parameters
 /// * `body` - closure which should be run with capturing panics.
-///     The closure has same requirements as the parameter to [`std::panic::catch_unwind`].
-///     In particular, if you want to assert that closure is unwind safe when type system
-///     can't deduce it, you can use [`std::panic::AssertUnwindSafe`].
-///     See [`std::panic::catch_unwind`] for details.
-/// 
+///   The closure has same requirements as the parameter to [`std::panic::catch_unwind`].
+///   In particular, if you want to assert that closure is unwind safe when type system
+///   can't deduce it, you can use [`std::panic::AssertUnwindSafe`].
+///   See [`std::panic::catch_unwind`] for details.
+///
 /// # Returns
 /// * `Ok(result)` - with `body1`'s return value if it completes without panic
 /// * `Err(panic)` - if `body` panics in process, with `Panic` as error value
@@ -109,10 +105,7 @@ pub fn catch_panic<R>(body: impl FnOnce() -> R + UnwindSafe) -> Result<R, Panic>
             // FIXME: check `info.can_unwind()` when https://github.com/rust-lang/rust/issues/92988 stabilizes;
             // otherwise we won't handle properly panics which initially don't unwind
             if panic_bits.is_none() {
-                panic_bits = Some((
-                    info.location().map(Into::into),
-                    Backtrace::capture(),
-                ));
+                panic_bits = Some((info.location().map(Into::into), Backtrace::capture()));
                 NextHook::Break
             } else {
                 // In this case we assume we get non-unwinding panic in process of unwind.

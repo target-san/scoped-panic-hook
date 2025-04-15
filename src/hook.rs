@@ -36,7 +36,7 @@ pub fn with_scoped_hook<R>(
     body: impl FnOnce() -> R,
 ) -> R {
     init_scoped_hooks();
-    
+
     let new_info = HookInfo::from_hook(&mut hook);
     let old_info = CURRENT_SCOPED_HOOK.replace(Some(new_info));
     let _restore = defer(|| CURRENT_SCOPED_HOOK.set(old_info));
@@ -59,16 +59,15 @@ pub fn catch_unwind_with_scoped_hook<R>(
 }
 
 thread_local! {
-    static CURRENT_SCOPED_HOOK: Cell<Option<HookInfo>> = Cell::new(None);
+    static CURRENT_SCOPED_HOOK: Cell<Option<HookInfo>> = const { Cell::new(None) };
 }
 
 static INIT_SCOPED_HOOKS: Once = Once::new();
 
 fn scoped_hook_fn(info: &PanicHookInfo<'_>, base_hook: &dyn Fn(&PanicHookInfo<'_>)) {
-    let call_base_hook = CURRENT_SCOPED_HOOK.get().map_or(
-        true,
-        |hook| unsafe { hook.call_handler(info) } == NextHook::PrevInstalledHook
-    );
+    let call_base_hook = CURRENT_SCOPED_HOOK
+        .get()
+        .is_none_or(|hook| unsafe { hook.call_handler(info) } == NextHook::PrevInstalledHook);
 
     if call_base_hook {
         base_hook(info);
@@ -84,12 +83,12 @@ struct HookInfo {
 }
 
 impl HookInfo {
-    fn from_hook(
-        hook: &mut impl FnMut(&PanicHookInfo<'_>) -> NextHook,
-    ) -> Self {
+    fn from_hook(hook: &mut impl FnMut(&PanicHookInfo<'_>) -> NextHook) -> Self {
         Self {
             // transmute is required to erase lifetimes from actual closure type
-            hook: unsafe { mem::transmute(hook as DynHookPtr<'_>) },
+            hook: unsafe {
+                mem::transmute::<DynHookPtr<'_>, StaticHookPtr>(hook as DynHookPtr<'_>)
+            },
         }
     }
 
