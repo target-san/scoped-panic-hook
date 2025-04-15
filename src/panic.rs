@@ -270,6 +270,7 @@ fn format_from_fn<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result>(
 mod tests {
     use super::*;
     use std::panic::panic_any;
+    use std::path::Path;
 
     #[test]
     fn simple_catch_panic() {
@@ -279,8 +280,8 @@ mod tests {
         assert_eq!(panic.message(), "Oops!");
 
         let loc = panic.location().unwrap();
-        assert!(loc.file().ends_with("/panic.rs"));
-        assert_eq!(loc.line(), 276);
+        assert!(Path::new(loc.file()).ends_with("panic.rs"));
+        assert_eq!(loc.line(), 277);
         assert_eq!(loc.column(), 36);
 
         let payload = panic.into_raw_payload();
