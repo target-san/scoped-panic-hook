@@ -2,6 +2,7 @@ use std::cell::Cell;
 use std::mem;
 use std::panic::{PanicHookInfo, UnwindSafe, catch_unwind, set_hook, take_hook};
 use std::sync::Once;
+use std::thread;
 
 /// Specifies whether to stop at currently executed scoped hook
 /// or continue with other options
@@ -37,7 +38,7 @@ pub fn init_scoped_hooks() {
 pub fn catch_unwind_with_scoped_hook<R>(
     mut hook: impl FnMut(&PanicHookInfo<'_>) -> NextHook,
     body: impl FnOnce() -> R + UnwindSafe,
-) -> std::thread::Result<R> {
+) -> thread::Result<R> {
     init_scoped_hooks();
 
     let new_info = HookInfo::from_hook(&mut hook);
@@ -97,4 +98,41 @@ fn defer<F: FnOnce()>(f: F) -> impl Drop {
     }
 
     Defer(mem::ManuallyDrop::new(f))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simple_ok() {
+        let mut counter = 0;
+
+        catch_unwind_with_scoped_hook(
+            |_| {
+                counter += 1;
+                NextHook::Break
+            },
+            || (),
+        )
+        .unwrap_err();
+
+        assert_eq!(counter, 0);
+    }
+
+    #[test]
+    fn simple_panic() {
+        let mut counter = 0;
+
+        catch_unwind_with_scoped_hook(
+            |_| {
+                counter += 1;
+                NextHook::Break
+            },
+            || panic!("Oops!"),
+        )
+        .unwrap_err();
+
+        assert_eq!(counter, 1);
+    }
 }
