@@ -17,4 +17,4 @@ jobs:
     - name: Check
       run: cargo xtask ci
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test
