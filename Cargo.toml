@@ -3,6 +3,9 @@ name = "scoped-panic-hook"
 version = "0.1.0"
 edition = "2024"
 authors = [ "Igor Baidiuk <target.san@gmail.com>"]
+license-file = "LICENSE"
+readme = "README.md"
+repository = "https://github.com/target-san/scoped-panic-hook"
 description = """
 Adds scoped, nestable, thread-local hooks for panics and some utilities for capturing and analyzing panics more conveniently
 """
