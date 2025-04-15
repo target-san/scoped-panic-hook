@@ -9,11 +9,19 @@ env:
 
 jobs:
   CI:
-
-    runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        toolchain: [stable, nightly, 1.86.0]
+        os: [ubuntu-24.04, windows-2022]
+    
+    runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
+    - uses: actions-rs/toolchain@v1
+      with:
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+          components: rustfmt, clippy
     - name: Check
       run: cargo xtask ci
     - name: Run tests
