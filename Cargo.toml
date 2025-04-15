@@ -1,9 +1,9 @@
 [package]
 name = "scoped-panic-hook"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = [ "Igor Baidiuk <target.san@gmail.com>"]
-license-file = "LICENSE"
+license = "MIT"
 readme = "README.md"
 repository = "https://github.com/target-san/scoped-panic-hook"
 description = """
