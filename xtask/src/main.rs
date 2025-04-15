@@ -12,7 +12,7 @@ fn main() {
 
 fn do_main() -> Result<()> {
     match Xtask::parse().cmd {
-        Cmd::Check => {
+        Cmd::Tidy => {
             // Normally, we run linter first to format code after all lints are fixed
             cargo()?
                 .args([
@@ -92,7 +92,7 @@ struct Xtask {
 #[derive(clap::Subcommand, Debug)]
 enum Cmd {
     /// Lint, format and other checks over project
-    Check,
+    Tidy,
     /// Run checks for continuous integration
     CI,
 }

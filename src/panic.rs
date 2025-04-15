@@ -116,6 +116,12 @@ pub struct CatchPanicConfig {
 }
 /// Runs provided closure and captures panic if one happens
 ///
+/// # Limitations
+///
+/// Stable API doesn't allow to detect from panic hook that panic being handled will unwind.
+/// So if you get unwindable panic, panic info will be swallowed. This will be fixed when
+/// [#92988](https://github.com/rust-lang/rust/issues/92988) stabilizes
+///
 /// # Parameters
 /// * `config` - options used when capturing panic info
 /// * `body` - closure which should be run with capturing panics.
@@ -171,6 +177,12 @@ pub fn catch_panic_with_config<R>(
     }
 }
 /// Runs provided closure and captures panic if one happens, along with its backtrace
+///
+/// # Limitations
+///
+/// Stable API doesn't allow to detect from panic hook that panic being handled will unwind.
+/// So if you get unwindable panic, panic info will be swallowed. This will be fixed when
+/// [#92988](https://github.com/rust-lang/rust/issues/92988) stabilizes
 ///
 /// # Parameters
 /// * `body` - closure which should be run with capturing panics.
