@@ -22,27 +22,6 @@ pub fn init_scoped_hooks() {
         set_hook(Box::new(move |info| scoped_hook_fn(info, &old_handler)));
     });
 }
-/// Installs specified custom panic hook, calls provided body function
-/// and reverts hook installation
-///
-/// # Parameters
-/// * `hook` - scoped panic hook function
-/// * `body` - payload function, hook is overridden for the duration of its call
-///
-/// # Returns
-/// `body`'s return value
-pub fn with_scoped_hook<R>(
-    mut hook: impl FnMut(&PanicHookInfo<'_>) -> NextHook,
-    body: impl FnOnce() -> R,
-) -> R {
-    init_scoped_hooks();
-
-    let new_info = HookInfo::from_hook(&mut hook);
-    let old_info = CURRENT_SCOPED_HOOK.replace(Some(new_info));
-    let _restore = defer(|| CURRENT_SCOPED_HOOK.set(old_info));
-
-    body()
-}
 /// Executes `body` function wrapped in `catch_unwind` with specified scoped panic hook installed
 ///
 /// # Parameters
@@ -56,10 +35,16 @@ pub fn with_scoped_hook<R>(
 /// # Returns
 /// Usual `catch_unwind` result with `Ok(...)` being return value from `body`
 pub fn catch_unwind_with_scoped_hook<R>(
-    hook: impl FnMut(&PanicHookInfo<'_>) -> NextHook,
+    mut hook: impl FnMut(&PanicHookInfo<'_>) -> NextHook,
     body: impl FnOnce() -> R + UnwindSafe,
 ) -> std::thread::Result<R> {
-    with_scoped_hook(hook, || catch_unwind(body))
+    init_scoped_hooks();
+
+    let new_info = HookInfo::from_hook(&mut hook);
+    let old_info = CURRENT_SCOPED_HOOK.replace(Some(new_info));
+    let _restore = defer(|| CURRENT_SCOPED_HOOK.set(old_info));
+
+    catch_unwind(body)
 }
 
 thread_local! {
