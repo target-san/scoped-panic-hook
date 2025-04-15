@@ -15,4 +15,12 @@ This crate provides convenient API for obtaining panic info after unwinding
 This will either produce normal result of closure or or conveniently gathered panic info,
 which includes panic location, message, raw payload and backtrace
 
-Crate also exposes raw APIs for scoped panic hooks, see `hook` module
+## Useful modules
+
+* `hook` - raw scoped hook APIs
+* `panic` - all types and functions relevant to capturing panics, including some advanced features
+
+# Development
+
+Project uses [`cargo-xtask` pattern](https://github.com/matklad/cargo-xtask).
+Run `cargo xtask` to see available commands

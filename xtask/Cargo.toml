@@ -3,6 +3,7 @@ name = "xtask"
 version = "0.1.0"
 edition = "2024"
 description = "Maintenance CLI utility for project"
+publish = false
 
 [dependencies]
 anyhow = "1.0.98"
