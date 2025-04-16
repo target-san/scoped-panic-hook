@@ -194,12 +194,27 @@ fn panic_from_hook_info(info: &PanicHookInfo<'_>, config: &CatchPanicConfig) -> 
     }
 }
 
+#[cfg(nightly)]
+fn in_hook_backtrace_style() -> BacktraceStyle {
+    match std::panic::get_backtrace_style() {
+        None | Some(std::panic::BacktraceStyle::Off) => BacktraceStyle::Off,
+        Some(std::panic::BacktraceStyle::Full) => BacktraceStyle::Full,
+        // std enum is non-exhaustive
+        Some(_) => BacktraceStyle::Short,
+    }
+}
+
+#[cfg(not(nightly))]
+fn in_hook_backtrace_style() -> BacktraceStyle {
+    BacktraceStyle::Short
+}
+
 fn print_panic_in_hook(panic: &Panic) {
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("<unnamed>");
     let msg = format!(
         "\nthread {name} panicked during unwind. Initial panic:\n{}",
-        panic.display_with_backtrace()
+        panic.display_with_backtrace_style(in_hook_backtrace_style())
     );
     let _ = std::io::stderr().lock().write_all(msg.as_bytes());
 }

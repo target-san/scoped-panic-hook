@@ -29,6 +29,7 @@
 //! ```
 #![cfg_attr(nightly, feature(panic_update_hook))]
 #![cfg_attr(nightly, feature(panic_can_unwind))]
+#![cfg_attr(nightly, feature(panic_backtrace_config))]
 
 /// Raw API for setting up scoped panic hooks
 pub mod hook;
