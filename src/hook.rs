@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::mem;
-use std::panic::{PanicHookInfo, UnwindSafe, catch_unwind, set_hook, take_hook};
+use std::panic::{PanicHookInfo, UnwindSafe, catch_unwind};
 use std::sync::Once;
 use std::thread;
 
@@ -18,10 +18,26 @@ pub enum NextHook {
 /// Usually you don't need to call it explicitly, yet it's left accessible
 /// in case crate user wants to perform initialization at well-defined point
 pub fn init_scoped_hooks() {
-    INIT_SCOPED_HOOKS.call_once(|| {
-        let old_handler = take_hook();
-        set_hook(Box::new(move |info| scoped_hook_fn(info, &old_handler)));
+    INIT_SCOPED_HOOKS.call_once(install_hook);
+}
+
+#[cfg(nightly)]
+fn install_hook() {
+    std::panic::update_hook(|prev, info| {
+        if scoped_hook_fn(info) {
+            prev(info);
+        }
     });
+}
+
+#[cfg(not(nightly))]
+fn install_hook() {
+    let old_handler = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if scoped_hook_fn(info) {
+            old_handler(info);
+        }
+    }));
 }
 /// Executes `body` function wrapped in `catch_unwind` with specified scoped panic hook installed
 ///
@@ -54,14 +70,10 @@ thread_local! {
 
 static INIT_SCOPED_HOOKS: Once = Once::new();
 
-fn scoped_hook_fn(info: &PanicHookInfo<'_>, base_hook: &dyn Fn(&PanicHookInfo<'_>)) {
-    let call_base_hook = CURRENT_SCOPED_HOOK
+fn scoped_hook_fn(info: &PanicHookInfo<'_>) -> bool {
+    CURRENT_SCOPED_HOOK
         .get()
-        .is_none_or(|hook| unsafe { hook.call_handler(info) } == NextHook::PrevInstalledHook);
-
-    if call_base_hook {
-        base_hook(info);
-    }
+        .is_none_or(|hook| unsafe { hook.call_handler(info) } == NextHook::PrevInstalledHook)
 }
 
 type DynHookPtr<'a> = *mut (dyn FnMut(&PanicHookInfo<'_>) -> NextHook + 'a);

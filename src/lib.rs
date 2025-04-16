@@ -27,6 +27,8 @@
 //!
 //! println!("Caught panics: {counter}");
 //! ```
+#![cfg_attr(nightly, feature(panic_update_hook))]
+#![cfg_attr(nightly, feature(panic_can_unwind))]
 
 /// Raw API for setting up scoped panic hooks
 pub mod hook;
