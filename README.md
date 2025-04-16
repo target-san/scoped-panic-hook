@@ -25,6 +25,17 @@ which includes panic location, message, raw payload and backtrace
 Project uses [`cargo-xtask` pattern](https://github.com/matklad/cargo-xtask).
 Run `cargo xtask` to see available commands
 
-# TODO
+# Nightly features
 
-Test no-unwind cases
+Crate doesn't have separate feature `nightly`. Instead, it uses toolchain detection to automatically determine
+whether to use nightly features or not.
+
+While API remains the same, some internal behaviors are changed
+* Global hook used to support scoped hooks is installed atomically,
+  using `update_hook` instead of `take_hook`+`set_hook`
+* No-unwind panics are handled more correctly. In particular,
+  if no-unwind panic happens as the first one, you'll see panic details anyway.
+* Backtrace print style used inside hook in no-unwind case is taken from `std::panic::get_backtrace_style`
+  and is not hardcoded to short
+
+These tweaks will be hopefully moved to stable version when related features are stabilized
