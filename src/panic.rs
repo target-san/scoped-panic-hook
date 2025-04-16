@@ -1,10 +1,11 @@
 use crate::hook::{NextHook, catch_unwind_with_scoped_hook};
 use std::any::Any;
-use std::backtrace::{Backtrace, BacktraceStatus};
+use std::backtrace::Backtrace;
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt::{self, Display};
-use std::panic::{Location, UnwindSafe};
+use std::io::Write;
+use std::panic::{Location, PanicHookInfo, UnwindSafe};
 /// Panic info gathered as one record
 ///
 /// Contains panic's location, message or raw payload, and backtrace, if collected
@@ -14,10 +15,21 @@ pub struct Panic {
     payload: Result<Message, RawPayload>,
     backtrace: Backtrace,
 }
+/// Backtrace display style
+///
+/// There's [`std::panic::BacktraceStyle`], but it's still experimental
+#[derive(Copy, Clone, Debug)]
+pub enum BacktraceStyle {
+    Off,
+    Short,
+    Full,
+}
 
 type Message = Cow<'static, str>;
 
 type RawPayload = Box<dyn Any + Send + 'static>;
+
+const UNKNOWN_PANIC: &str = "<unknown panic>";
 
 impl Panic {
     /// Panic location, if original [`std::panic::PanicHookInfo`] provided one
@@ -29,11 +41,7 @@ impl Panic {
     /// If panic was raised using [`std::panic::panic_any`] with non-string payload,
     /// this function returns substitute message
     pub fn message(&self) -> &str {
-        if let Ok(msg) = &self.payload {
-            msg.as_ref()
-        } else {
-            "<unknown panic>"
-        }
+        self.payload.as_ref().map_or(UNKNOWN_PANIC, |m| m.as_ref())
     }
     /// Raw panic payload if it wasn't recognized as string-like message and converted to it
     pub fn raw_payload(&self) -> Option<&RawPayload> {
@@ -55,32 +63,34 @@ impl Panic {
         }
     }
     /// Produces [`std::fmt::Display`]'able object
-    /// which displays panic's message, location and backtrace, if captured
+    /// which displays panic's message, location and short backtrace, if captured
     pub fn display_with_backtrace(&self) -> impl Display + '_ {
-        format_from_fn(move |f| {
-            write!(f, "{}", self)?;
-
-            if self.backtrace.status() == BacktraceStatus::Captured {
-                write!(f, "\nBacktrace: {}", self.backtrace)?;
-            }
-
-            Ok(())
-        })
+        self.display_with_backtrace_style(BacktraceStyle::Short)
     }
-}
 
-fn transform_payload(payload: RawPayload) -> Result<Message, RawPayload> {
-    let payload = match payload.downcast::<&str>() {
-        Ok(str) => return Ok((*str).into()),
-        Err(p) => p,
-    };
+    /// Produces [`std::fmt::Display`]'able object
+    /// which displays panic's message, location and backtrace, if captured, with specified style
+    pub fn display_with_backtrace_style(&self, style: BacktraceStyle) -> impl Display + '_ {
+        format_from_fn(move |f| self.fmt_panic(style, f))
+    }
 
-    let payload = match payload.downcast::<String>() {
-        Ok(str) => return Ok((*str).into()),
-        Err(p) => p,
-    };
-
-    Err(payload)
+    fn fmt_panic(
+        &self,
+        backtrace_style: BacktraceStyle,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        if let Some(loc) = self.location() {
+            write!(f, "Panic \"{}\" at {}", self.message(), loc)?;
+        } else {
+            write!(f, "Panic \"{}\"", self.message())?;
+        }
+        // NB: backtrace print style selection via `#` isn't well documented
+        match backtrace_style {
+            BacktraceStyle::Off => Ok(()),
+            BacktraceStyle::Short => writeln!(f, "\nBacktrace: {}", self.backtrace),
+            BacktraceStyle::Full => writeln!(f, "\nBacktrace: {:#}", self.backtrace),
+        }
+    }
 }
 
 impl Display for Panic {
@@ -88,11 +98,7 @@ impl Display for Panic {
     ///
     /// To display full panic info including backtrace, use [`Panic::display_with_backtrace`]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(loc) = self.location() {
-            write!(f, "Panic \"{}\" at {}", self.message(), loc)
-        } else {
-            write!(f, "Panic \"{}\"", self.message())
-        }
+        self.fmt_panic(BacktraceStyle::Off, f)
     }
 }
 
@@ -137,42 +143,106 @@ pub fn catch_panic_with_config<R>(
     config: CatchPanicConfig,
     body: impl FnOnce() -> R + UnwindSafe,
 ) -> Result<R, Panic> {
-    let mut panic_bits = None;
+    let mut panic = None;
 
-    match catch_unwind_with_scoped_hook(
-        |info| {
-            // FIXME: check `info.can_unwind()` when https://github.com/rust-lang/rust/issues/92988 stabilizes;
-            // otherwise we won't handle properly panics which initially don't unwind
-            if panic_bits.is_none() {
-                panic_bits = Some((
-                    info.location().map(Into::into),
-                    match config.capture_backtrace {
-                        CaptureBacktrace::No => Backtrace::disabled(),
-                        CaptureBacktrace::Yes => Backtrace::capture(),
-                        CaptureBacktrace::Force => Backtrace::force_capture(),
-                    },
-                ));
-                NextHook::Break
-            } else {
-                // In this case we assume we get non-unwinding panic in process of unwind.
-                // As a result, we forward handling to previously installed hook,
-                // so we'll see it described before program abort
-                NextHook::PrevInstalledHook
-            }
-        },
-        body,
-    ) {
+    match catch_unwind_with_scoped_hook(catch_panic_hook(config, &mut panic), body) {
         Ok(ok) => {
-            debug_assert!(panic_bits.is_none());
+            debug_assert!(panic.is_none());
             Ok(ok)
         }
         Err(raw_payload) => {
-            let (location, backtrace) = panic_bits.expect("Panic info wasn't recorded");
+            let panic = panic.expect("Panic info wasn't recorded");
             Err(Panic {
-                location,
                 payload: transform_payload(raw_payload),
-                backtrace,
+                ..panic
             })
+        }
+    }
+}
+
+fn transform_payload(payload: RawPayload) -> Result<Message, RawPayload> {
+    let payload = match payload.downcast::<&str>() {
+        Ok(str) => return Ok((*str).into()),
+        Err(p) => p,
+    };
+
+    let payload = match payload.downcast::<String>() {
+        Ok(str) => return Ok((*str).into()),
+        Err(p) => p,
+    };
+
+    Err(payload)
+}
+/// Constructs intermediate panic, some of its data will be reused
+fn panic_from_hook_info(info: &PanicHookInfo<'_>, config: &CatchPanicConfig) -> Panic {
+    let message = if let Some(str) = info.payload().downcast_ref::<&str>() {
+        (*str).into()
+    } else if let Some(str) = info.payload().downcast_ref::<String>() {
+        str.clone().into()
+    } else {
+        UNKNOWN_PANIC.into()
+    };
+
+    Panic {
+        location: info.location().map(Into::into),
+        payload: Ok(message),
+        backtrace: match config.capture_backtrace {
+            CaptureBacktrace::No => Backtrace::disabled(),
+            CaptureBacktrace::Yes => Backtrace::capture(),
+            CaptureBacktrace::Force => Backtrace::force_capture(),
+        },
+    }
+}
+
+fn print_panic_in_hook(panic: &Panic) {
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("<unnamed>");
+    let msg = format!(
+        "\nthread {name} panicked during unwind. Initial panic:\n{}",
+        panic.display_with_backtrace()
+    );
+    let _ = std::io::stderr().lock().write_all(msg.as_bytes());
+}
+
+#[cfg(nightly)]
+fn catch_panic_hook(
+    config: CatchPanicConfig,
+    panic: &mut Option<Panic>,
+) -> impl FnMut(&PanicHookInfo<'_>) -> NextHook + '_ {
+    move |info| {
+        // No-unwind, we don't expect to run this hook ever again
+        if !info.can_unwind() {
+            if let Some(panic) = panic {
+                print_panic_in_hook(&*panic);
+            }
+            // Allow default or similar hook to display all the details
+            return NextHook::PrevInstalledHook;
+        }
+        // We shouldn't ever reach here, but just in case
+        assert!(panic.is_none(), "Panic was filled prior to unwind");
+
+        *panic = Some(panic_from_hook_info(info, &config));
+        NextHook::Break
+    }
+}
+
+#[cfg(not(nightly))]
+fn catch_panic_hook(
+    config: CatchPanicConfig,
+    panic: &mut Option<Panic>,
+) -> impl FnMut(&PanicHookInfo<'_>) -> NextHook + '_ {
+    move |info| {
+        // FIXME: check `info.can_unwind()` when https://github.com/rust-lang/rust/issues/92988 stabilizes;
+        // otherwise we won't handle properly panics which initially don't unwind
+        if let Some(panic) = panic {
+            // In this case we assume we get non-unwinding panic in process of unwind.
+            // As a result, we forward handling to previously installed hook,
+            // so we'll see it described before program abort
+            print_panic_in_hook(&*panic);
+            NextHook::PrevInstalledHook
+        } else {
+            *panic = Some(panic_from_hook_info(info, &config));
+            NextHook::Break
         }
     }
 }
@@ -182,7 +252,8 @@ pub fn catch_panic_with_config<R>(
 ///
 /// Stable API doesn't allow to detect from panic hook that panic being handled will unwind.
 /// So if you get unwindable panic, panic info will be swallowed. This will be fixed when
-/// [#92988](https://github.com/rust-lang/rust/issues/92988) stabilizes
+/// [#92988](https://github.com/rust-lang/rust/issues/92988) stabilizes.
+/// Correct API is used on nightly builds, which resolves issue.
 ///
 /// # Parameters
 /// * `body` - closure which should be run with capturing panics.
@@ -269,6 +340,7 @@ fn format_from_fn<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::backtrace::BacktraceStatus;
     use std::panic::panic_any;
     use std::path::Path;
 
@@ -281,7 +353,7 @@ mod tests {
 
         let loc = panic.location().unwrap();
         assert!(Path::new(loc.file()).ends_with("panic.rs"));
-        assert_eq!(loc.line(), 277);
+        assert_eq!(loc.line(), 349);
         assert_eq!(loc.column(), 36);
 
         let payload = panic.into_raw_payload();
