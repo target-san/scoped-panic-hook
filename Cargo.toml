@@ -12,6 +12,11 @@ repository = "https://github.com/target-san/scoped-panic-hook"
 description = """
 Adds scoped, nestable, thread-local hooks for panics and some utilities for capturing and analyzing panics more conveniently
 """
+keywords = [
+    "error",
+    "error-handling",
+    "panic",
+]
 
 [dependencies]
 
