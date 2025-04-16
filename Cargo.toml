@@ -14,3 +14,6 @@ Adds scoped, nestable, thread-local hooks for panics and some utilities for capt
 """
 
 [dependencies]
+
+[build-dependencies]
+rustc_version = "0.4.1"
