@@ -346,6 +346,7 @@ mod tests {
 
     #[test]
     fn simple_catch_panic() {
+        let line = line!();
         let panic = catch_panic(|| panic!("Oops!")).unwrap_err();
         // NB: we test backtrace status separately
         assert!(panic.raw_payload().is_none());
@@ -353,7 +354,7 @@ mod tests {
 
         let loc = panic.location().unwrap();
         assert!(Path::new(loc.file()).ends_with("panic.rs"));
-        assert_eq!(loc.line(), 349);
+        assert_eq!(loc.line(), line + 1);
         assert_eq!(loc.column(), 36);
 
         let payload = panic.into_raw_payload();
