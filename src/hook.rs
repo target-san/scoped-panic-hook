@@ -10,7 +10,7 @@ use std::thread;
 pub enum NextHook {
     /// Don't call anything after hook which returned this value
     Break,
-    /// Call hook which preceeds scoped hooks; usually that's default hook
+    /// Call hook which precedes scoped hooks; usually that's default hook
     PrevInstalledHook,
 }
 /// Initializes scoped hook infrastructure

@@ -15,7 +15,7 @@
 //!
 //! # Using manual panic hooks
 //!
-//! In case you wnat to do something nontrivial, you can analyze panics manually
+//! In case you want to do something nontrivial, you can analyze panics manually
 //!
 //! ```rust
 //! let mut counter = 0;

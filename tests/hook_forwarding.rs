@@ -8,7 +8,7 @@ fn counter_hook(_info: &PanicHookInfo<'_>) {
     GLOB_COUNTER.fetch_add(1, Ordering::Relaxed);
 }
 /// If we return [`NextHook::PrevInstalledHook`] from hook,
-/// previus installed hook should be actually invoked
+/// previous installed hook should be actually invoked
 ///
 /// Must be in separate binary because it overrides default hook
 /// prior to scoped one takes effect
