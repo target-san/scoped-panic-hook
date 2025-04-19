@@ -411,12 +411,12 @@ mod tests {
             use crate::panic::{CaptureBacktrace, CatchPanicConfig, catch_panic_with_config};
             use std::backtrace::BacktraceStatus;
             use std::env;
-    
+
             unsafe {
                 env::set_var("RUST_BACKTRACE", "0");
                 env::set_var("RUST_LIB_BACKTRACE", "0");
             }
-    
+
             let panic = catch_panic_with_config(
                 CatchPanicConfig {
                     capture_backtrace: CaptureBacktrace::Yes,
@@ -425,7 +425,7 @@ mod tests {
             )
             .unwrap_err();
             assert_eq!(panic.backtrace().status(), BacktraceStatus::Disabled);
-    
+
             let panic = catch_panic_with_config(
                 CatchPanicConfig {
                     capture_backtrace: CaptureBacktrace::Force,
@@ -436,18 +436,18 @@ mod tests {
             assert_eq!(panic.backtrace().status(), BacktraceStatus::Captured);
         }
     }
-    
+
     subprocess_test! {
         #[test]
         fn catch_panic_backtrace_enabled() {
             use crate::catch_panic;
             use std::backtrace::BacktraceStatus;
             use std::env;
-    
+
             unsafe {
                 env::set_var("RUST_BACKTRACE", "1");
             }
-    
+
             let panic = catch_panic(|| panic!("Oops!")).unwrap_err();
             assert_eq!(panic.backtrace().status(), BacktraceStatus::Captured);
         }

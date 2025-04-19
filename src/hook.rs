@@ -4,6 +4,8 @@ use std::panic::{PanicHookInfo, UnwindSafe, catch_unwind};
 use std::sync::Once;
 use std::thread;
 
+use defer::defer;
+
 /// Specifies whether to stop at currently executed scoped hook
 /// or continue with other options
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -59,7 +61,7 @@ pub fn catch_unwind_with_scoped_hook<R>(
 
     let new_info = HookInfo::from_hook(&mut hook);
     let old_info = CURRENT_SCOPED_HOOK.replace(Some(new_info));
-    let _restore = defer(|| CURRENT_SCOPED_HOOK.set(old_info));
+    defer! { CURRENT_SCOPED_HOOK.set(old_info) }
 
     catch_unwind(body)
 }
@@ -97,19 +99,6 @@ impl HookInfo {
     unsafe fn call_handler(&self, info: &PanicHookInfo<'_>) -> NextHook {
         unsafe { (*self.hook)(info) }
     }
-}
-/// Copy of `defer` from `defer` crate, to not introduce dependency
-fn defer<F: FnOnce()>(f: F) -> impl Drop {
-    struct Defer<F: FnOnce()>(mem::ManuallyDrop<F>);
-
-    impl<F: FnOnce()> Drop for Defer<F> {
-        fn drop(&mut self) {
-            let f: F = unsafe { mem::ManuallyDrop::take(&mut self.0) };
-            f();
-        }
-    }
-
-    Defer(mem::ManuallyDrop::new(f))
 }
 
 #[cfg(test)]
@@ -156,9 +145,9 @@ mod tests {
             use crate::hook::{NextHook, catch_unwind_with_scoped_hook};
             use std::panic::{PanicHookInfo, set_hook};
             use std::sync::atomic::{AtomicUsize, Ordering};
-    
+
             static GLOB_COUNTER: AtomicUsize = AtomicUsize::new(0);
-    
+
             fn counter_hook(_info: &PanicHookInfo<'_>) {
                 GLOB_COUNTER.fetch_add(1, Ordering::Relaxed);
             }
@@ -168,9 +157,9 @@ mod tests {
             // Must be in separate binary because it overrides default hook
             // prior to scoped one takes effect
             set_hook(Box::new(counter_hook));
-    
+
             let mut counter = 0;
-    
+
             let result = catch_unwind_with_scoped_hook(
                 |_| {
                     counter += 1;
@@ -179,7 +168,7 @@ mod tests {
                 || panic!("Oops!"),
             );
             assert!(result.is_err());
-    
+
             assert_eq!(counter, 1);
             assert_eq!(GLOB_COUNTER.load(Ordering::Relaxed), 1);
         }

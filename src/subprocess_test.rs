@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::{Command, Stdio};
 
+use defer::defer;
 use tempfile::tempfile;
 /// Launches piece of test code as separate subprocess, collects all its output
 /// and then runs validation code against it
@@ -90,7 +91,7 @@ pub fn run_subprocess_test(
         print!("{TEST_OUTPUT_BOUNDARY}");
         // We expect that in case of panic we'll get test harness footer,
         // but in case of abort we won't get it, so finisher won't be needed
-        let _finisher = defer(|| print!("{TEST_OUTPUT_BOUNDARY}"));
+        defer! { print!("{TEST_OUTPUT_BOUNDARY}") };
         test_fn();
         return;
     }
@@ -125,21 +126,6 @@ pub fn run_subprocess_test(
     }
 
     verify_fn(code, output);
-}
-/// Copy of `defer` from `defer` crate, to not introduce dependency
-fn defer<F: FnOnce()>(f: F) -> impl Drop {
-    use std::mem::ManuallyDrop;
-
-    struct Defer<F: FnOnce()>(ManuallyDrop<F>);
-
-    impl<F: FnOnce()> Drop for Defer<F> {
-        fn drop(&mut self) {
-            let f: F = unsafe { ManuallyDrop::take(&mut self.0) };
-            f();
-        }
-    }
-
-    Defer(ManuallyDrop::new(f))
 }
 
 fn tmpfile_buffer() -> (File, File, File) {

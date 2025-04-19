@@ -23,3 +23,6 @@ rustc_version = "0.4.1"
 
 [dev-dependencies]
 tempfile = "3.19.1"
+
+[dependencies]
+defer = "0.2.1"
