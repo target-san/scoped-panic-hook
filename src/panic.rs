@@ -359,6 +359,7 @@ mod tests {
 
     use super::*;
     use std::backtrace::BacktraceStatus;
+    use std::env;
     use std::panic::panic_any;
     use std::path::Path;
 
@@ -408,10 +409,6 @@ mod tests {
     subprocess_test! {
         #[test]
         fn catch_panic_backtrace_disabled() {
-            use crate::panic::{CaptureBacktrace, CatchPanicConfig, catch_panic_with_config};
-            use std::backtrace::BacktraceStatus;
-            use std::env;
-
             unsafe {
                 env::set_var("RUST_BACKTRACE", "0");
                 env::set_var("RUST_LIB_BACKTRACE", "0");
@@ -440,10 +437,6 @@ mod tests {
     subprocess_test! {
         #[test]
         fn catch_panic_backtrace_enabled() {
-            use crate::catch_panic;
-            use std::backtrace::BacktraceStatus;
-            use std::env;
-
             unsafe {
                 env::set_var("RUST_BACKTRACE", "1");
             }

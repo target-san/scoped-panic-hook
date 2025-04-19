@@ -142,8 +142,7 @@ mod tests {
     subprocess_test! {
         #[test]
         fn hook_forwarding() {
-            use crate::hook::{NextHook, catch_unwind_with_scoped_hook};
-            use std::panic::{PanicHookInfo, set_hook};
+            use std::panic::set_hook;
             use std::sync::atomic::{AtomicUsize, Ordering};
 
             static GLOB_COUNTER: AtomicUsize = AtomicUsize::new(0);
