@@ -15,7 +15,7 @@
 //!
 //! # Using manual panic hooks
 //!
-//! In case you wnat to do something nontrivial, you can analyze panics manually
+//! In case you want to do something nontrivial, you can analyze panics manually
 //!
 //! ```rust
 //! let mut counter = 0;
@@ -27,11 +27,16 @@
 //!
 //! println!("Caught panics: {counter}");
 //! ```
+#![cfg_attr(nightly, feature(panic_update_hook))]
+#![cfg_attr(nightly, feature(panic_can_unwind))]
+#![cfg_attr(nightly, feature(panic_backtrace_config))]
 
 /// Raw API for setting up scoped panic hooks
 pub mod hook;
 /// Panic capture types and functions,
 /// including some with finer tuned functionality
 pub mod panic;
+#[cfg(test)]
+mod subprocess_test;
 
 pub use panic::{Panic, catch_panic};
