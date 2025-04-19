@@ -25,6 +25,11 @@ which includes panic location, message, raw payload and backtrace
 Project uses [`cargo-xtask` pattern](https://github.com/matklad/cargo-xtask).
 Run `cargo xtask` to see available commands
 
+## Integration tests note
+
+They're located in a separate unpublished subcrate. This is because most of them need to execute
+certain test case binary as a separate process and then analyze its output
+
 # Nightly features
 
 Crate doesn't have separate feature `nightly`. Instead, it uses toolchain detection to automatically determine

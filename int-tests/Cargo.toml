@@ -1,0 +1,9 @@
+[package]
+name = "int-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+scoped-panic-hook = { path = "../" }
+tempfile = "3.19.1"

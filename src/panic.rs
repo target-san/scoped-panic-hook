@@ -225,16 +225,17 @@ fn catch_panic_hook(
     panic: &mut Option<Panic>,
 ) -> impl FnMut(&PanicHookInfo<'_>) -> NextHook + '_ {
     move |info| {
-        // No-unwind, we don't expect to run this hook ever again
         if !info.can_unwind() {
+            // No-unwind, we don't expect to run this hook ever again,
+            // so we print collected panic info, if any
             if let Some(panic) = panic {
                 print_panic_in_hook(&*panic);
             }
             // Allow default or similar hook to display all the details
             return NextHook::PrevInstalledHook;
         }
-        // We shouldn't ever reach here, but just in case
-        assert!(panic.is_none(), "Panic was filled prior to unwind");
+        // We shouldn't ever fail this assert, but just in case
+        assert!(panic.is_none(), "Panic was filled prior to unwind!");
 
         *panic = Some(panic_from_hook_info(info, &config));
         NextHook::Break
