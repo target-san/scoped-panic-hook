@@ -22,7 +22,7 @@ keywords = [
 rustc_version = "0.4.1"
 
 [dev-dependencies]
-subprocess-test = { git = "https://github.com/target-san/subprocess-test.git" }
+subprocess-test = "0.1.0"
 
 [dependencies]
 defer = "0.2.1"
