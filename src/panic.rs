@@ -355,13 +355,12 @@ fn format_from_fn<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result>(
 
 #[cfg(test)]
 mod tests {
-    use crate::subprocess_test;
-
     use super::*;
     use std::backtrace::BacktraceStatus;
     use std::env;
     use std::panic::panic_any;
     use std::path::Path;
+    use subprocess_test::subprocess_test;
 
     #[test]
     fn simple_catch_panic() {

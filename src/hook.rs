@@ -103,7 +103,7 @@ impl HookInfo {
 
 #[cfg(test)]
 mod tests {
-    use crate::subprocess_test;
+    use subprocess_test::subprocess_test;
 
     use super::*;
 

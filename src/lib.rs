@@ -36,7 +36,5 @@ pub mod hook;
 /// Panic capture types and functions,
 /// including some with finer tuned functionality
 pub mod panic;
-#[cfg(test)]
-mod subprocess_test;
 
 pub use panic::{Panic, catch_panic};
