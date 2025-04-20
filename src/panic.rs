@@ -432,9 +432,7 @@ mod tests {
             .unwrap_err();
             assert_eq!(panic.backtrace().status(), BacktraceStatus::Captured);
         }
-    }
 
-    subprocess_test! {
         #[test]
         fn catch_panic_backtrace_enabled() {
             unsafe {

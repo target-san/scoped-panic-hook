@@ -35,39 +35,48 @@ use tempfile::tempfile;
 #[macro_export]
 macro_rules! subprocess_test {
     (
-        #[test]
-        $(#[$attrs:meta])*
-        fn $test_name:ident () $test_block:block
-        verify |$status_param:ident, $stdout_param:ident| $verify_block:block
+        $(
+            #[test]
+            $(#[$attrs:meta])*
+            fn $test_name:ident () $test_block:block
+            $(verify |$status_param:ident, $stdout_param:ident| $verify_block:block)?
+        )*
     ) => {
-        #[test]
-        $(#[$attrs])*
-        fn $test_name() {
-            // NB: adjust full path to runner function whenever this code is moved to other module
-            $crate::subprocess_test::run_subprocess_test(
-                env!("CARGO_PKG_NAME"),
-                concat!(module_path!(), "::", stringify!($test_name)),
-                || $test_block,
-                |$status_param, $stdout_param| $verify_block,
-            );
-        }
-    };
-    (
-        #[test]
-        $(#[$attrs:meta])*
-        fn $test_name:ident() $test_block:block
-    ) => {
-        $crate::subprocess_test! {
+        $(
             #[test]
             $(#[$attrs])*
-            fn $test_name() $test_block
-            verify |exit_code, output| {
-                if exit_code != 0 {
-                    eprintln!("{output}");
-                    panic!("Test process failed with {exit_code}");
-                }
+            fn $test_name() {
+                // NB: adjust full path to runner function whenever this code is moved to other module
+                $crate::subprocess_test::run_subprocess_test(
+                    env!("CARGO_PKG_NAME"),
+                    concat!(module_path!(), "::", stringify!($test_name)),
+                    || $test_block,
+                    $crate::subprocess_test! {
+                        @tokens_or_default {
+                            $(|$status_param, $stdout_param| $verify_block)?
+                        } or {
+                            |exit_code, output| {
+                                if exit_code != 0 {
+                                    eprintln!("{output}");
+                                    panic!("Test process failed with {exit_code}");
+                                }
+                            }
+                        }
+                    },
+                );
             }
-        }
+        )*
+    };
+    (
+        @tokens_or_default { $($tokens:tt)+ } or { $($_:tt)* }
+    ) => {
+        $($tokens)+
+    };
+
+    (
+        @tokens_or_default { } or { $($tokens:tt)* }
+    ) => {
+        $($tokens)*
     };
 }
 
