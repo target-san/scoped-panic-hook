@@ -210,12 +210,26 @@ fn in_hook_backtrace_style() -> BacktraceStyle {
 }
 
 fn print_panic_in_hook(panic: &Panic) {
+    use std::fmt::Write;
+
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("<unnamed>");
-    let msg = format!(
-        "\nthread {name} panicked during unwind. Initial panic:\n{}",
-        panic.display_with_backtrace_style(in_hook_backtrace_style())
-    );
+    let mut msg = if let Some(loc) = panic.location() {
+        format!(
+            "\nthread '{name}' panicked at {loc}:\n{}",
+            panic.message()
+        )
+    } else {
+        format!(
+            "\nthread '{name}' panicked:\n{}",
+            panic.message()
+        )
+    };
+    let _ = match in_hook_backtrace_style() {
+        BacktraceStyle::Off => Ok(()),
+        BacktraceStyle::Short => write!(msg, "\nstack backtrace:\n{}", panic.backtrace()),
+        BacktraceStyle::Full => write!(msg, "\nstack backtrace:\n{:#}", panic.backtrace()),
+    };
     let _ = std::io::stderr().lock().write_all(msg.as_bytes());
 }
 
@@ -405,6 +419,18 @@ mod tests {
         assert_eq!(panic.backtrace().status(), BacktraceStatus::Disabled);
     }
 
+    struct JustDie;
+
+    impl Drop for JustDie {
+        fn drop(&mut self) {
+            panic!("Die!");
+        }
+    }
+
+    fn find_panic_message<'a>(string: &'a str, module_path: &str, test_name: &str) -> (Option<usize>, &'a str) {
+        todo!()
+    }
+
     subprocess_test! {
         #[test]
         fn catch_panic_backtrace_disabled() {
@@ -440,6 +466,26 @@ mod tests {
 
             let panic = catch_panic(|| panic!("Oops!")).unwrap_err();
             assert_eq!(panic.backtrace().status(), BacktraceStatus::Captured);
+        }
+
+        #[test]
+        fn panic_in_drop() {
+            let panic = catch_panic(|| {
+                let _ = JustDie;
+            }).unwrap_err();
+            assert_eq!(panic.message(), "Die!");
+        }
+
+        #[test]
+        fn panic_in_drop_on_unwind() {
+            let _ = catch_panic(|| {
+                let _keeper = JustDie;
+                panic!("Cause unwind");
+            });
+        }
+        verify |success, output| {
+            assert!(!success, "Panic during unwind from within `catch_panic` should fail");
+            println!("{output}");
         }
     }
 }
