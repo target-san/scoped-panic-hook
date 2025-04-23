@@ -27,9 +27,14 @@
 //!
 //! println!("Caught panics: {counter}");
 //! ```
-#![cfg_attr(nightly, feature(panic_update_hook))]
-#![cfg_attr(nightly, feature(panic_can_unwind))]
-#![cfg_attr(nightly, feature(panic_backtrace_config))]
+#![cfg_attr(
+    nightly,
+    feature(panic_update_hook),
+    feature(panic_can_unwind),
+    feature(panic_backtrace_config)
+)]
+// `core::panicking::panic_nounwind` in tests
+#![cfg_attr(all(nightly, test), allow(internal_features), feature(panic_internals))]
 
 /// Raw API for setting up scoped panic hooks
 pub mod hook;

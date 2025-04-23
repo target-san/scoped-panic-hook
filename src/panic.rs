@@ -217,10 +217,11 @@ fn print_panic_in_hook(panic: &Panic) {
         format!("\nthread '{name}' panicked:\n{}", panic.message())
     };
     let _ = match in_hook_backtrace_style() {
-        BacktraceStyle::Off => Ok(()),
-        BacktraceStyle::Short => write!(msg, "\nstack backtrace:\n{}", panic.backtrace()),
-        BacktraceStyle::Full => write!(msg, "\nstack backtrace:\n{:#}", panic.backtrace()),
+        BacktraceStyle::Off => writeln!(msg),
+        BacktraceStyle::Short => writeln!(msg, "\nstack backtrace:\n{}", panic.backtrace()),
+        BacktraceStyle::Full => writeln!(msg, "\nstack backtrace:\n{:#}", panic.backtrace()),
     };
+
     let _ = std::io::stderr().lock().write_all(msg.as_bytes());
 }
 
@@ -258,20 +259,26 @@ impl CatchPanicHook {
             match &self.state {
                 HookState::NoPanic => {
                     if can_unwind(info) {
+                        eprintln!("NoPanic can unwind");
                         self.state = HookState::Panic(panic_from_hook_info(info, &self.config));
                         NextHook::Break
                     } else {
+                        eprintln!("NoPanic no unwind");
                         self.state = HookState::NoUnwind;
                         NextHook::PrevInstalledHook
                     }
                 }
                 HookState::Panic(panic) => {
+                    eprintln!("Panic");
                     // Means we encountered new panic while already unwinding
                     print_panic_in_hook(panic);
                     self.state = HookState::NoUnwind;
                     NextHook::PrevInstalledHook
                 }
-                HookState::NoUnwind => NextHook::PrevInstalledHook,
+                HookState::NoUnwind => {
+                    eprintln!("NoUnwind");
+                    NextHook::PrevInstalledHook
+                }
             }
         }
     }
@@ -551,7 +558,7 @@ mod tests {
             };
 
             let Ok(output) = find_panic_message(output, module_path!(), "panic_in_drop_on_unwind", "Die!") else {
-                panic!("Couldn't find initial panic");
+                panic!("Couldn't find panic from drop");
             };
 
             let Ok(output) = find_panic_message(
@@ -560,11 +567,56 @@ mod tests {
                 "panic_in_drop_on_unwind",
                 "panic in a destructor during cleanup"
             ) else {
-                panic!("Couldn't find initial panic");
+                panic!("Couldn't find landing pad panic");
             };
 
             let tail = find_panic_message(output, module_path!(), "panic_in_drop_on_unwind", None);
-            assert!(tail.is_err());
+            assert!(tail.is_err(), "Expected three panics - initial, from drop and from landing pad");
+        }
+
+        #[test]
+        fn panic_from_ffi() {
+            let _ = catch_panic(|| {
+                extern "C" fn ffi_panic() {
+                    panic!("Hi from FFI");
+                }
+                ffi_panic();
+            });
+        }
+        verify |success, output| {
+            assert!(!success, "Nounwind panic should've failed even from within catch_panic");
+            let Ok(output) = find_panic_message(&output, module_path!(), "panic_from_ffi", "Hi from FFI") else {
+                panic!("Couldn't find initial panic from FFI");
+            };
+
+            let Ok(output) = find_panic_message(
+                output,
+                module_path!(),
+                "panic_from_ffi",
+                "panic in a function that cannot unwind"
+            ) else {
+                panic!("Couldn't find landing pad panic");
+            };
+
+            let tail = find_panic_message(output, module_path!(), "panic_from_ffi", None);
+            assert!(tail.is_err(), "Expected two panics - initial from FFI and from landing pad");
+        }
+
+        #[test]
+        #[cfg(nightly)]
+        fn panic_nounwind() {
+            let _ = catch_panic(|| {
+                core::panicking::panic_nounwind("Nounwind");
+            });
+        }
+        verify |success, output| {
+            assert!(!success, "Nounwind panic should've failed even from within catch_panic");
+            let Ok(output) = find_panic_message(&output, module_path!(), "panic_nounwind", "Nounwind") else {
+                panic!("Couldn't find initial panic `panic_nounwind`");
+            };
+
+            let tail = find_panic_message(output, module_path!(), "panic_nounwind", None);
+            assert!(tail.is_err(), "Expected one panics - initial from `panic_nounwind");
         }
     }
 }
