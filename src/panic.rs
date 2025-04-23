@@ -143,15 +143,12 @@ pub fn catch_panic_with_config<R>(
     config: CatchPanicConfig,
     body: impl FnOnce() -> R + UnwindSafe,
 ) -> Result<R, Panic> {
-    let mut panic = None;
+    let mut hook = CatchPanicHook::new(config);
 
-    match catch_unwind_with_scoped_hook(catch_panic_hook(config, &mut panic), body) {
-        Ok(ok) => {
-            debug_assert!(panic.is_none());
-            Ok(ok)
-        }
+    match catch_unwind_with_scoped_hook(hook.hook_fn(), body) {
+        Ok(ok) => Ok(ok),
         Err(raw_payload) => {
-            let panic = panic.expect("Panic info wasn't recorded");
+            let panic = hook.into_panic();
             Err(Panic {
                 payload: transform_payload(raw_payload),
                 ..panic
@@ -215,15 +212,9 @@ fn print_panic_in_hook(panic: &Panic) {
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("<unnamed>");
     let mut msg = if let Some(loc) = panic.location() {
-        format!(
-            "\nthread '{name}' panicked at {loc}:\n{}",
-            panic.message()
-        )
+        format!("\nthread '{name}' panicked at {loc}:\n{}", panic.message())
     } else {
-        format!(
-            "\nthread '{name}' panicked:\n{}",
-            panic.message()
-        )
+        format!("\nthread '{name}' panicked:\n{}", panic.message())
     };
     let _ = match in_hook_backtrace_style() {
         BacktraceStyle::Off => Ok(()),
@@ -233,46 +224,65 @@ fn print_panic_in_hook(panic: &Panic) {
     let _ = std::io::stderr().lock().write_all(msg.as_bytes());
 }
 
-#[cfg(nightly)]
-fn catch_panic_hook(
+struct CatchPanicHook {
     config: CatchPanicConfig,
-    panic: &mut Option<Panic>,
-) -> impl FnMut(&PanicHookInfo<'_>) -> NextHook + '_ {
-    move |info| {
-        if !info.can_unwind() {
-            // No-unwind, we don't expect to run this hook ever again,
-            // so we print collected panic info, if any
-            if let Some(panic) = panic {
-                print_panic_in_hook(&*panic);
-            }
-            // Allow default or similar hook to display all the details
-            return NextHook::PrevInstalledHook;
-        }
-        // We shouldn't ever fail this assert, but just in case
-        assert!(panic.is_none(), "Panic was filled prior to unwind!");
+    state: HookState,
+}
 
-        *panic = Some(panic_from_hook_info(info, &config));
-        NextHook::Break
-    }
+enum HookState {
+    NoPanic,
+    Panic(Panic),
+    NoUnwind,
+}
+
+#[cfg(nightly)]
+fn can_unwind(info: &PanicHookInfo<'_>) -> bool {
+    info.can_unwind()
 }
 
 #[cfg(not(nightly))]
-fn catch_panic_hook(
-    config: CatchPanicConfig,
-    panic: &mut Option<Panic>,
-) -> impl FnMut(&PanicHookInfo<'_>) -> NextHook + '_ {
-    move |info| {
-        // FIXME: check `info.can_unwind()` when https://github.com/rust-lang/rust/issues/92988 stabilizes;
-        // otherwise we won't handle properly panics which initially don't unwind
-        if let Some(panic) = panic {
-            // In this case we assume we get non-unwinding panic in process of unwind.
-            // As a result, we forward handling to previously installed hook,
-            // so we'll see it described before program abort
-            print_panic_in_hook(&*panic);
-            NextHook::PrevInstalledHook
-        } else {
-            *panic = Some(panic_from_hook_info(info, &config));
-            NextHook::Break
+fn can_unwind(_: &PanicHookInfo<'_>) -> bool {
+    true
+}
+
+impl CatchPanicHook {
+    fn new(config: CatchPanicConfig) -> Self {
+        Self {
+            config,
+            state: HookState::NoPanic,
+        }
+    }
+
+    fn hook_fn(&mut self) -> impl FnMut(&PanicHookInfo<'_>) -> NextHook + '_ {
+        move |info| {
+            match &self.state {
+                HookState::NoPanic => {
+                    if can_unwind(info) {
+                        self.state = HookState::Panic(panic_from_hook_info(info, &self.config));
+                        NextHook::Break
+                    } else {
+                        self.state = HookState::NoUnwind;
+                        NextHook::PrevInstalledHook
+                    }
+                }
+                HookState::Panic(panic) => {
+                    // Means we encountered new panic while already unwinding
+                    print_panic_in_hook(panic);
+                    self.state = HookState::NoUnwind;
+                    NextHook::PrevInstalledHook
+                }
+                HookState::NoUnwind => NextHook::PrevInstalledHook,
+            }
+        }
+    }
+
+    fn into_panic(self) -> Panic {
+        match self.state {
+            HookState::NoPanic => panic!("Panic info wasn't recorded"),
+            HookState::Panic(panic) => panic,
+            HookState::NoUnwind => {
+                panic!("`catch_unwind` unexpectedly returned from no-unwind situation")
+            }
         }
     }
 }
@@ -426,9 +436,59 @@ mod tests {
             panic!("Die!");
         }
     }
+    /// Find panic message in output
+    ///
+    /// # Parameters
+    /// * `string` - source string
+    /// * `module_path` - `module_path!()` value
+    /// * `test_name` - test function name
+    /// * `panic_message` - concrete panic message, if specified, or any panic message, if not
+    ///
+    /// # Returns
+    /// * `Ok(str)` - found pattern, returns string's tail after pattern
+    /// * `Err(str)` - pattern not found, returns initial string
+    fn find_panic_message<'a, 'b>(
+        string: &'a str,
+        module_path: &str,
+        test_name: &str,
+        panic_message: impl Into<Option<&'b str>>,
+    ) -> Result<&'a str, &'a str> {
+        let init_string = Err(string);
+        let thread_name = format!("{module_path}::{test_name}");
+        let thread_name = &thread_name[thread_name
+            .find("::")
+            .expect("Full test path is expected to include crate name")
+            + 2..];
+        let panic_message: Option<&str> = panic_message.into();
 
-    fn find_panic_message<'a>(string: &'a str, module_path: &str, test_name: &str) -> (Option<usize>, &'a str) {
-        todo!()
+        let panic_prefix = format!("thread '{thread_name}' panicked at");
+        let string = if let Some(next) = string.find(&panic_prefix) {
+            &string[next + panic_prefix.len()..]
+        } else {
+            return init_string;
+        };
+        // Start of next line after "thread panicked..."
+        let string = if let Some(next) = string.find('\n') {
+            &string[(next + 1)..]
+        } else {
+            return init_string;
+        };
+        // Panic message line and text after it
+        let (msg_line, string) = if let Some(next) = string.find('\n') {
+            (&string[..next], &string[(next + 1)..])
+        } else {
+            (string, "")
+        };
+
+        if let Some(panic_message) = panic_message {
+            if panic_message == msg_line {
+                Ok(string)
+            } else {
+                init_string
+            }
+        } else {
+            Ok(string)
+        }
     }
 
     subprocess_test! {
@@ -476,6 +536,7 @@ mod tests {
             assert_eq!(panic.message(), "Die!");
         }
 
+        // This test may be a bit volatile, in case panicking will change
         #[test]
         fn panic_in_drop_on_unwind() {
             let _ = catch_panic(|| {
@@ -485,7 +546,25 @@ mod tests {
         }
         verify |success, output| {
             assert!(!success, "Panic during unwind from within `catch_panic` should fail");
-            println!("{output}");
+            let Ok(output) = find_panic_message(&output, module_path!(), "panic_in_drop_on_unwind", "Cause unwind") else {
+                panic!("Couldn't find initial panic");
+            };
+
+            let Ok(output) = find_panic_message(output, module_path!(), "panic_in_drop_on_unwind", "Die!") else {
+                panic!("Couldn't find initial panic");
+            };
+
+            let Ok(output) = find_panic_message(
+                output,
+                module_path!(),
+                "panic_in_drop_on_unwind",
+                "panic in a destructor during cleanup"
+            ) else {
+                panic!("Couldn't find initial panic");
+            };
+
+            let tail = find_panic_message(output, module_path!(), "panic_in_drop_on_unwind", None);
+            assert!(tail.is_err());
         }
     }
 }
