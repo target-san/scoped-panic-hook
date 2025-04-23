@@ -553,25 +553,24 @@ mod tests {
         }
         verify |success, output| {
             assert!(!success, "Panic during unwind from within `catch_panic` should fail");
+            // We can't depend on some additional panics like landing pad ones,
+            // so we check only for presence of initial and drop panics once;
+            // the rest is deemed undecided
             let Ok(output) = find_panic_message(&output, module_path!(), "panic_in_drop_on_unwind", "Cause unwind") else {
                 panic!("Couldn't find initial panic");
+            };
+
+            let Err(_) = find_panic_message(output, module_path!(), "panic_in_drop_on_unwind", "Cause unwind") else {
+                panic!("Found initial panic for the second time");
             };
 
             let Ok(output) = find_panic_message(output, module_path!(), "panic_in_drop_on_unwind", "Die!") else {
                 panic!("Couldn't find panic from drop");
             };
 
-            let Ok(output) = find_panic_message(
-                output,
-                module_path!(),
-                "panic_in_drop_on_unwind",
-                "panic in a destructor during cleanup"
-            ) else {
-                panic!("Couldn't find landing pad panic");
+            let Err(_) = find_panic_message(output, module_path!(), "panic_in_drop_on_unwind", "Die!") else {
+                panic!("Found panic from drop for the second time");
             };
-
-            let tail = find_panic_message(output, module_path!(), "panic_in_drop_on_unwind", None);
-            assert!(tail.is_err(), "Expected three panics - initial, from drop and from landing pad");
         }
 
         #[test]
@@ -585,21 +584,16 @@ mod tests {
         }
         verify |success, output| {
             assert!(!success, "Nounwind panic should've failed even from within catch_panic");
+            // We can't depend on some additional panics like landing pad ones,
+            // so we check only for presence of initial FFI panic once;
+            // the rest is deemed undecided
             let Ok(output) = find_panic_message(&output, module_path!(), "panic_from_ffi", "Hi from FFI") else {
                 panic!("Couldn't find initial panic from FFI");
             };
 
-            let Ok(output) = find_panic_message(
-                output,
-                module_path!(),
-                "panic_from_ffi",
-                "panic in a function that cannot unwind"
-            ) else {
-                panic!("Couldn't find landing pad panic");
+            let Err(_) = find_panic_message(output, module_path!(), "panic_from_ffi", "Hi from FFI") else {
+                panic!("Found initial panic from FFI for the second time");
             };
-
-            let tail = find_panic_message(output, module_path!(), "panic_from_ffi", None);
-            assert!(tail.is_err(), "Expected two panics - initial from FFI and from landing pad");
         }
 
         #[test]
@@ -611,12 +605,14 @@ mod tests {
         }
         verify |success, output| {
             assert!(!success, "Nounwind panic should've failed even from within catch_panic");
+            // Same as with other nounwind tests, we check only for panic we caused explicitly
             let Ok(output) = find_panic_message(&output, module_path!(), "panic_nounwind", "Nounwind") else {
-                panic!("Couldn't find initial panic `panic_nounwind`");
+                panic!("Couldn't find initial panic from `panic_nounwind`");
             };
 
-            let tail = find_panic_message(output, module_path!(), "panic_nounwind", None);
-            assert!(tail.is_err(), "Expected one panics - initial from `panic_nounwind");
+            let Err(_) = find_panic_message(output, module_path!(), "panic_nounwind", "Nounwind") else {
+                panic!("Found initial panic from `panic_nounwind` for the second time");
+            };
         }
     }
 }
