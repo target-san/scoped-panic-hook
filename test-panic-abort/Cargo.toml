@@ -1,0 +1,10 @@
+[package]
+name = "test-panic-abort"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Package with some tests run under panic = 'abort'"
+
+[dev-dependencies]
+subprocess-test = "0.1.2"
+scoped-panic-hook = { path = ".." }

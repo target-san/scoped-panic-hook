@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "xtask"]
+members = [".", "test-panic-abort", "xtask"]
 
 [package]
 name = "scoped-panic-hook"
@@ -22,7 +22,7 @@ keywords = [
 rustc_version = "0.4.1"
 
 [dev-dependencies]
-subprocess-test = "0.1.1"
+subprocess-test = "0.1.2"
 
 [dependencies]
 defer = "0.2.1"
