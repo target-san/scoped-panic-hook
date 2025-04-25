@@ -42,7 +42,7 @@ fn panic_from_within() {
 fn panic_from_within_verify() {
     let (ok, output) = run_case("panic_from_within");
     assert!(!ok);
-    let panic_msg = find_panic_message(&output, module_path!(), "panic_from_within", "Oops!");
+    let panic_msg = find_panic_message(&output, module_path!(), "main", "Oops!");
     assert!(panic_msg.is_ok(), "{output}");
 }
 

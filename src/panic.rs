@@ -1,11 +1,9 @@
-use crate::hook::{NextHook, catch_unwind_with_scoped_hook};
 use std::any::Any;
 use std::backtrace::Backtrace;
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt::{self, Display};
-use std::io::Write;
-use std::panic::{Location, PanicHookInfo, UnwindSafe};
+use std::panic::{Location, UnwindSafe};
 /// Panic info gathered as one record
 ///
 /// Contains panic's location, message or raw payload, and backtrace, if collected
@@ -120,179 +118,6 @@ pub struct CatchPanicConfig {
     /// Whether backtrace should be captured
     pub capture_backtrace: CaptureBacktrace,
 }
-/// Runs provided closure and captures panic if one happens
-///
-/// # Limitations
-///
-/// Stable API doesn't allow to detect from panic hook that panic being handled will unwind.
-/// So if you get unwindable panic, panic info will be swallowed. This will be fixed when
-/// [#92988](https://github.com/rust-lang/rust/issues/92988) stabilizes
-///
-/// # Parameters
-/// * `config` - options used when capturing panic info
-/// * `body` - closure which should be run with capturing panics.
-///   The closure has same requirements as the parameter to [`std::panic::catch_unwind`].
-///   In particular, if you want to assert that closure is unwind safe when type system
-///   can't deduce it, you can use [`std::panic::AssertUnwindSafe`].
-///   See [`std::panic::catch_unwind`] for details.
-///
-/// # Returns
-/// * `Ok(result)` - with `body1`'s return value if it completes without panic
-/// * `Err(panic)` - if `body` panics in process, with `Panic` as error value
-pub fn catch_panic_with_config<R>(
-    config: CatchPanicConfig,
-    body: impl FnOnce() -> R + UnwindSafe,
-) -> Result<R, Panic> {
-    let mut hook = CatchPanicHook::new(config);
-
-    match catch_unwind_with_scoped_hook(hook.hook_fn(), body) {
-        Ok(ok) => Ok(ok),
-        Err(raw_payload) => {
-            let panic = hook.into_panic();
-            Err(Panic {
-                payload: transform_payload(raw_payload),
-                ..panic
-            })
-        }
-    }
-}
-
-fn transform_payload(payload: RawPayload) -> Result<Message, RawPayload> {
-    let payload = match payload.downcast::<&str>() {
-        Ok(str) => return Ok((*str).into()),
-        Err(p) => p,
-    };
-
-    let payload = match payload.downcast::<String>() {
-        Ok(str) => return Ok((*str).into()),
-        Err(p) => p,
-    };
-
-    Err(payload)
-}
-/// Constructs intermediate panic, some of its data will be reused
-fn panic_from_hook_info(info: &PanicHookInfo<'_>, config: &CatchPanicConfig) -> Panic {
-    let message = if let Some(str) = info.payload().downcast_ref::<&str>() {
-        (*str).into()
-    } else if let Some(str) = info.payload().downcast_ref::<String>() {
-        str.clone().into()
-    } else {
-        UNKNOWN_PANIC.into()
-    };
-
-    Panic {
-        location: info.location().map(Into::into),
-        payload: Ok(message),
-        backtrace: match config.capture_backtrace {
-            CaptureBacktrace::No => Backtrace::disabled(),
-            CaptureBacktrace::Yes => Backtrace::capture(),
-            CaptureBacktrace::Force => Backtrace::force_capture(),
-        },
-    }
-}
-
-#[cfg(nightly)]
-fn in_hook_backtrace_style() -> BacktraceStyle {
-    match std::panic::get_backtrace_style() {
-        None | Some(std::panic::BacktraceStyle::Off) => BacktraceStyle::Off,
-        Some(std::panic::BacktraceStyle::Full) => BacktraceStyle::Full,
-        // std enum is non-exhaustive
-        Some(_) => BacktraceStyle::Short,
-    }
-}
-
-#[cfg(not(nightly))]
-fn in_hook_backtrace_style() -> BacktraceStyle {
-    BacktraceStyle::Short
-}
-
-fn print_panic_in_hook(panic: &Panic) {
-    use std::fmt::Write;
-
-    let thread = std::thread::current();
-    let name = thread.name().unwrap_or("<unnamed>");
-    let mut msg = if let Some(loc) = panic.location() {
-        format!("\nthread '{name}' panicked at {loc}:\n{}", panic.message())
-    } else {
-        format!("\nthread '{name}' panicked:\n{}", panic.message())
-    };
-    let _ = match in_hook_backtrace_style() {
-        BacktraceStyle::Off => writeln!(msg),
-        BacktraceStyle::Short => writeln!(msg, "\nstack backtrace:\n{}", panic.backtrace()),
-        BacktraceStyle::Full => writeln!(msg, "\nstack backtrace:\n{:#}", panic.backtrace()),
-    };
-
-    let _ = std::io::stderr().lock().write_all(msg.as_bytes());
-}
-
-struct CatchPanicHook {
-    config: CatchPanicConfig,
-    state: HookState,
-}
-
-enum HookState {
-    NoPanic,
-    Panic(Panic),
-    NoUnwind,
-}
-
-#[cfg(nightly)]
-fn can_unwind(info: &PanicHookInfo<'_>) -> bool {
-    info.can_unwind()
-}
-
-#[cfg(not(nightly))]
-fn can_unwind(_: &PanicHookInfo<'_>) -> bool {
-    true
-}
-
-impl CatchPanicHook {
-    fn new(config: CatchPanicConfig) -> Self {
-        Self {
-            config,
-            state: HookState::NoPanic,
-        }
-    }
-
-    fn hook_fn(&mut self) -> impl FnMut(&PanicHookInfo<'_>) -> NextHook + '_ {
-        move |info| {
-            match &self.state {
-                HookState::NoPanic => {
-                    if can_unwind(info) {
-                        eprintln!("NoPanic can unwind");
-                        self.state = HookState::Panic(panic_from_hook_info(info, &self.config));
-                        NextHook::Break
-                    } else {
-                        eprintln!("NoPanic no unwind");
-                        self.state = HookState::NoUnwind;
-                        NextHook::PrevInstalledHook
-                    }
-                }
-                HookState::Panic(panic) => {
-                    eprintln!("Panic");
-                    // Means we encountered new panic while already unwinding
-                    print_panic_in_hook(panic);
-                    self.state = HookState::NoUnwind;
-                    NextHook::PrevInstalledHook
-                }
-                HookState::NoUnwind => {
-                    eprintln!("NoUnwind");
-                    NextHook::PrevInstalledHook
-                }
-            }
-        }
-    }
-
-    fn into_panic(self) -> Panic {
-        match self.state {
-            HookState::NoPanic => panic!("Panic info wasn't recorded"),
-            HookState::Panic(panic) => panic,
-            HookState::NoUnwind => {
-                panic!("`catch_unwind` unexpectedly returned from no-unwind situation")
-            }
-        }
-    }
-}
 /// Runs provided closure and captures panic if one happens, along with its backtrace
 ///
 /// # Limitations
@@ -301,6 +126,13 @@ impl CatchPanicHook {
 /// So if you get unwindable panic, panic info will be swallowed. This will be fixed when
 /// [#92988](https://github.com/rust-lang/rust/issues/92988) stabilizes.
 /// Correct API is used on nightly builds, which resolves issue.
+///
+/// # Panic modes
+///
+/// In case crate is compiled in panic mode other than `panic=unwind`, hook will unconditionally
+/// forward execution to previously installed hook. In case of panic there will be no unwind,
+/// so client code will not get panic info anyway, although we set hook anyway
+/// in case there are nested scoped hooks, to preserve local behavior.
 ///
 /// # Parameters
 /// * `body` - closure which should be run with capturing panics.
@@ -319,6 +151,38 @@ pub fn catch_panic<R>(body: impl FnOnce() -> R + UnwindSafe) -> Result<R, Panic>
         },
         body,
     )
+}
+/// Runs provided closure and captures panic if one happens
+///
+/// # Limitations
+///
+/// Stable API doesn't allow to detect from panic hook that panic being handled will unwind.
+/// So if you get unwindable panic, panic info will be swallowed. This will be fixed when
+/// [#92988](https://github.com/rust-lang/rust/issues/92988) stabilizes
+///
+/// # Panic modes
+///
+/// In case crate is compiled in panic mode other than `panic=unwind`, hook will unconditionally
+/// forward execution to previously installed hook. In case of panic there will be no unwind,
+/// so client code will not get panic info anyway, although we set hook anyway
+/// in case there are nested scoped hooks, to preserve local behavior.
+///
+/// # Parameters
+/// * `config` - options used when capturing panic info
+/// * `body` - closure which should be run with capturing panics.
+///   The closure has same requirements as the parameter to [`std::panic::catch_unwind`].
+///   In particular, if you want to assert that closure is unwind safe when type system
+///   can't deduce it, you can use [`std::panic::AssertUnwindSafe`].
+///   See [`std::panic::catch_unwind`] for details.
+///
+/// # Returns
+/// * `Ok(result)` - with `body1`'s return value if it completes without panic
+/// * `Err(panic)` - if `body` panics in process, with `Panic` as error value
+pub fn catch_panic_with_config<R>(
+    config: CatchPanicConfig,
+    body: impl FnOnce() -> R + UnwindSafe,
+) -> Result<R, Panic> {
+    catch_impl::catch_panic_with_config(config, body)
 }
 /// Simple structure which mirrors [`std::panic::Location`],
 /// although owns file name and is freely movable around
@@ -356,6 +220,190 @@ impl From<&'_ Location<'_>> for OwnedLocation {
 impl Display for OwnedLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}:{}", self.file, self.line, self.column)
+    }
+}
+
+#[cfg(panic = "unwind")]
+mod catch_impl {
+    use super::{
+        BacktraceStyle, CaptureBacktrace, CatchPanicConfig, Message, Panic, RawPayload,
+        UNKNOWN_PANIC,
+    };
+    use crate::hook::{NextHook, catch_unwind_with_scoped_hook};
+    use std::backtrace::Backtrace;
+    use std::panic::{PanicHookInfo, UnwindSafe};
+
+    pub fn catch_panic_with_config<R>(
+        config: CatchPanicConfig,
+        body: impl FnOnce() -> R + UnwindSafe,
+    ) -> Result<R, Panic> {
+        let mut hook = CatchPanicHook::new(config);
+
+        match catch_unwind_with_scoped_hook(hook.hook_fn(), body) {
+            Ok(ok) => Ok(ok),
+            Err(raw_payload) => {
+                let panic = hook.into_panic();
+                Err(Panic {
+                    payload: transform_payload(raw_payload),
+                    ..panic
+                })
+            }
+        }
+    }
+
+    struct CatchPanicHook {
+        config: CatchPanicConfig,
+        state: HookState,
+    }
+
+    enum HookState {
+        NoPanic,
+        Panic(Panic),
+        NoUnwind,
+    }
+
+    #[cfg(nightly)]
+    fn can_unwind(info: &PanicHookInfo<'_>) -> bool {
+        info.can_unwind()
+    }
+
+    #[cfg(not(nightly))]
+    fn can_unwind(_: &PanicHookInfo<'_>) -> bool {
+        true
+    }
+
+    impl CatchPanicHook {
+        fn new(config: CatchPanicConfig) -> Self {
+            Self {
+                config,
+                state: HookState::NoPanic,
+            }
+        }
+
+        fn hook_fn(&mut self) -> impl FnMut(&PanicHookInfo<'_>) -> NextHook + '_ {
+            move |info| {
+                match &self.state {
+                    HookState::NoPanic => {
+                        if can_unwind(info) {
+                            eprintln!("NoPanic can unwind");
+                            self.state = HookState::Panic(panic_from_hook_info(info, &self.config));
+                            NextHook::Break
+                        } else {
+                            eprintln!("NoPanic no unwind");
+                            self.state = HookState::NoUnwind;
+                            NextHook::PrevInstalledHook
+                        }
+                    }
+                    HookState::Panic(panic) => {
+                        eprintln!("Panic");
+                        // Means we encountered new panic while already unwinding
+                        print_panic_in_hook(panic);
+                        self.state = HookState::NoUnwind;
+                        NextHook::PrevInstalledHook
+                    }
+                    HookState::NoUnwind => {
+                        eprintln!("NoUnwind");
+                        NextHook::PrevInstalledHook
+                    }
+                }
+            }
+        }
+
+        fn into_panic(self) -> Panic {
+            match self.state {
+                HookState::NoPanic => panic!("Panic info wasn't recorded"),
+                HookState::Panic(panic) => panic,
+                HookState::NoUnwind => {
+                    panic!("`catch_unwind` unexpectedly returned from no-unwind situation")
+                }
+            }
+        }
+    }
+
+    fn transform_payload(payload: RawPayload) -> Result<Message, RawPayload> {
+        let payload = match payload.downcast::<&str>() {
+            Ok(str) => return Ok((*str).into()),
+            Err(p) => p,
+        };
+
+        let payload = match payload.downcast::<String>() {
+            Ok(str) => return Ok((*str).into()),
+            Err(p) => p,
+        };
+
+        Err(payload)
+    }
+    /// Constructs intermediate panic, some of its data will be reused
+    fn panic_from_hook_info(info: &PanicHookInfo<'_>, config: &CatchPanicConfig) -> Panic {
+        let message = if let Some(str) = info.payload().downcast_ref::<&str>() {
+            (*str).into()
+        } else if let Some(str) = info.payload().downcast_ref::<String>() {
+            str.clone().into()
+        } else {
+            UNKNOWN_PANIC.into()
+        };
+
+        Panic {
+            location: info.location().map(Into::into),
+            payload: Ok(message),
+            backtrace: match config.capture_backtrace {
+                CaptureBacktrace::No => Backtrace::disabled(),
+                CaptureBacktrace::Yes => Backtrace::capture(),
+                CaptureBacktrace::Force => Backtrace::force_capture(),
+            },
+        }
+    }
+
+    #[cfg(nightly)]
+    fn in_hook_backtrace_style() -> BacktraceStyle {
+        match std::panic::get_backtrace_style() {
+            None | Some(std::panic::BacktraceStyle::Off) => BacktraceStyle::Off,
+            Some(std::panic::BacktraceStyle::Full) => BacktraceStyle::Full,
+            // std enum is non-exhaustive
+            Some(_) => BacktraceStyle::Short,
+        }
+    }
+
+    #[cfg(not(nightly))]
+    fn in_hook_backtrace_style() -> BacktraceStyle {
+        BacktraceStyle::Short
+    }
+
+    fn print_panic_in_hook(panic: &Panic) {
+        use std::fmt::Write as _;
+        use std::io::Write as _;
+
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("<unnamed>");
+        let mut msg = if let Some(loc) = panic.location() {
+            format!("\nthread '{name}' panicked at {loc}:\n{}", panic.message())
+        } else {
+            format!("\nthread '{name}' panicked:\n{}", panic.message())
+        };
+        let _ = match in_hook_backtrace_style() {
+            BacktraceStyle::Off => writeln!(msg),
+            BacktraceStyle::Short => writeln!(msg, "\nstack backtrace:\n{}", panic.backtrace()),
+            BacktraceStyle::Full => writeln!(msg, "\nstack backtrace:\n{:#}", panic.backtrace()),
+        };
+
+        let _ = std::io::stderr().lock().write_all(msg.as_bytes());
+    }
+}
+
+#[cfg(not(panic = "unwind"))]
+mod catch_impl {
+    use super::{CatchPanicConfig, Panic};
+    use crate::hook::{NextHook, catch_unwind_with_scoped_hook};
+    use std::panic::UnwindSafe;
+
+    pub fn catch_panic_with_config<R>(
+        _: CatchPanicConfig,
+        body: impl FnOnce() -> R + UnwindSafe,
+    ) -> Result<R, Panic> {
+        match catch_unwind_with_scoped_hook(|_| NextHook::PrevInstalledHook, body) {
+            Ok(ok) => Ok(ok),
+            Err(_) => unreachable!(),
+        }
     }
 }
 /// Creates type whose `Display` and `Debug` implementations
