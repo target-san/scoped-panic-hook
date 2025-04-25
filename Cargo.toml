@@ -1,5 +1,6 @@
 [workspace]
-members = [".", "test-panic-abort", "xtask"]
+members = [".", "xtask"]
+exclude = ["test-panic-abort"]
 
 [package]
 name = "scoped-panic-hook"
