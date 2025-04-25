@@ -1,6 +1,6 @@
 [package]
 name = "scoped-panic-hook"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = [ "Igor Baidiuk <target.san@gmail.com>"]
 license = "MIT"
@@ -9,5 +9,17 @@ repository = "https://github.com/target-san/scoped-panic-hook"
 description = """
 Adds scoped, nestable, thread-local hooks for panics and some utilities for capturing and analyzing panics more conveniently
 """
+keywords = [
+    "error",
+    "error-handling",
+    "panic",
+]
+
+[build-dependencies]
+rustc_version = "0.4.1"
+
+[dev-dependencies]
+subprocess-test = "0.1.2"
 
 [dependencies]
+defer = "0.2.1"

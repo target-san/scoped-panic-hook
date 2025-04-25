@@ -1,8 +1,10 @@
 use std::cell::Cell;
 use std::mem;
-use std::panic::{PanicHookInfo, UnwindSafe, catch_unwind, set_hook, take_hook};
+use std::panic::{PanicHookInfo, UnwindSafe, catch_unwind};
 use std::sync::Once;
 use std::thread;
+
+use defer::defer;
 
 /// Specifies whether to stop at currently executed scoped hook
 /// or continue with other options
@@ -10,7 +12,7 @@ use std::thread;
 pub enum NextHook {
     /// Don't call anything after hook which returned this value
     Break,
-    /// Call hook which preceeds scoped hooks; usually that's default hook
+    /// Call hook which precedes scoped hooks; usually that's default hook
     PrevInstalledHook,
 }
 /// Initializes scoped hook infrastructure
@@ -18,10 +20,26 @@ pub enum NextHook {
 /// Usually you don't need to call it explicitly, yet it's left accessible
 /// in case crate user wants to perform initialization at well-defined point
 pub fn init_scoped_hooks() {
-    INIT_SCOPED_HOOKS.call_once(|| {
-        let old_handler = take_hook();
-        set_hook(Box::new(move |info| scoped_hook_fn(info, &old_handler)));
+    INIT_SCOPED_HOOKS.call_once(install_hook);
+}
+
+#[cfg(nightly)]
+fn install_hook() {
+    std::panic::update_hook(|prev, info| {
+        if scoped_hook_fn(info) {
+            prev(info);
+        }
     });
+}
+
+#[cfg(not(nightly))]
+fn install_hook() {
+    let old_handler = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if scoped_hook_fn(info) {
+            old_handler(info);
+        }
+    }));
 }
 /// Executes `body` function wrapped in `catch_unwind` with specified scoped panic hook installed
 ///
@@ -43,7 +61,7 @@ pub fn catch_unwind_with_scoped_hook<R>(
 
     let new_info = HookInfo::from_hook(&mut hook);
     let old_info = CURRENT_SCOPED_HOOK.replace(Some(new_info));
-    let _restore = defer(|| CURRENT_SCOPED_HOOK.set(old_info));
+    defer! { CURRENT_SCOPED_HOOK.set(old_info) }
 
     catch_unwind(body)
 }
@@ -54,14 +72,10 @@ thread_local! {
 
 static INIT_SCOPED_HOOKS: Once = Once::new();
 
-fn scoped_hook_fn(info: &PanicHookInfo<'_>, base_hook: &dyn Fn(&PanicHookInfo<'_>)) {
-    let call_base_hook = CURRENT_SCOPED_HOOK
+fn scoped_hook_fn(info: &PanicHookInfo<'_>) -> bool {
+    CURRENT_SCOPED_HOOK
         .get()
-        .is_none_or(|hook| unsafe { hook.call_handler(info) } == NextHook::PrevInstalledHook);
-
-    if call_base_hook {
-        base_hook(info);
-    }
+        .is_none_or(|hook| unsafe { hook.call_handler(info) } == NextHook::PrevInstalledHook)
 }
 
 type DynHookPtr<'a> = *mut (dyn FnMut(&PanicHookInfo<'_>) -> NextHook + 'a);
@@ -86,22 +100,11 @@ impl HookInfo {
         unsafe { (*self.hook)(info) }
     }
 }
-/// Copy of `defer` from `defer` crate, to not introduce dependency
-fn defer<F: FnOnce()>(f: F) -> impl Drop {
-    struct Defer<F: FnOnce()>(mem::ManuallyDrop<F>);
-
-    impl<F: FnOnce()> Drop for Defer<F> {
-        fn drop(&mut self) {
-            let f: F = unsafe { mem::ManuallyDrop::take(&mut self.0) };
-            f();
-        }
-    }
-
-    Defer(mem::ManuallyDrop::new(f))
-}
 
 #[cfg(test)]
 mod tests {
+    use subprocess_test::subprocess_test;
+
     use super::*;
 
     #[test]
@@ -134,5 +137,39 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(counter, 1);
+    }
+
+    subprocess_test! {
+        #[test]
+        fn hook_forwarding() {
+            use std::panic::set_hook;
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            static GLOB_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+            fn counter_hook(_info: &PanicHookInfo<'_>) {
+                GLOB_COUNTER.fetch_add(1, Ordering::Relaxed);
+            }
+            // If we return [`NextHook::PrevInstalledHook`] from hook,
+            // previous installed hook should be actually invoked
+            //
+            // Must be in separate binary because it overrides default hook
+            // prior to scoped one takes effect
+            set_hook(Box::new(counter_hook));
+
+            let mut counter = 0;
+
+            let result = catch_unwind_with_scoped_hook(
+                |_| {
+                    counter += 1;
+                    NextHook::PrevInstalledHook
+                },
+                || panic!("Oops!"),
+            );
+            assert!(result.is_err());
+
+            assert_eq!(counter, 1);
+            assert_eq!(GLOB_COUNTER.load(Ordering::Relaxed), 1);
+        }
     }
 }

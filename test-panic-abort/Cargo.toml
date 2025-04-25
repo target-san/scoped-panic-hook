@@ -1,0 +1,13 @@
+[package]
+name = "test-panic-abort"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Package with some tests run under panic = 'abort'"
+
+[dependencies]
+scoped-panic-hook = { path = ".." }
+tempfile = "3.19.1"
+
+[profile.dev]
+panic = "abort"
