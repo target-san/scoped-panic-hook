@@ -153,7 +153,7 @@ fn command_context(cmd: &Command) -> String {
     let mut buf = "When executing".to_owned();
     write!(buf, " {:?}", cmd.get_program()).unwrap();
     for arg in cmd.get_args() {
-        write!(buf, " {:?}", arg).unwrap();
+        write!(buf, " {arg:?}").unwrap();
     }
 
     buf
