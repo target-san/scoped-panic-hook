@@ -1,7 +1,3 @@
-[workspace]
-members = [".", "xtask"]
-exclude = ["test-panic-abort"]
-
 [package]
 name = "scoped-panic-hook"
 version = "0.1.2"
